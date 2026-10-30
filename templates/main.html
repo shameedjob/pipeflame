@@ -33,7 +33,7 @@
                     <option value="60">1 minute</option>
                 </select>
             </label>
-            <button id="Clear">Clear</button>
+            <button id="clear">Clear</button>
             <a href="/logout" style="margin-left: auto">Log out</a>
         </div>
         <div id="viewer"></div>
@@ -70,7 +70,12 @@
             let pending = null;
 
             async function clear(){
-                
+                let conf = window.confirm("Clear the live profiler? This will erase the current data for all users.")
+                if (conf){
+                    const res = await fetch("/clear.json", { method: "POST" });
+                    if (res.status === 401) location.href = "/login";
+                    loadProfile();
+                }
             }
 
             async function loadProfile() {
@@ -122,7 +127,7 @@
 
             document.getElementById("tenant").addEventListener("change", e => setFilter("tenant_id", e.target.value));
             document.getElementById("refresh").addEventListener("click", loadProfile);
-            document.getElementById("clear").addEventListener("clear_check", clear);
+            document.getElementById("clear").addEventListener("click", clear);
             loadProfile();
 
             // seconds between reloads, chosen per browser and remembered; 0 means no refresh

@@ -101,6 +101,13 @@ def version():
     with recorder_lock:
         return jsonify(version=recorder.version)
 
+@app.route('/clear.json', methods=['POST'])
+def clear():
+    # erases the data for every viewer, not just this one
+    with recorder_lock:
+        recorder.clear()
+        return jsonify(version=recorder.version)
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve live flamegraphs of calls received over a pipe.")
     parser.add_argument("--pipe", help=f"pipe name on Windows, socket path elsewhere; overrides ${PIPE_ENV_VAR}")

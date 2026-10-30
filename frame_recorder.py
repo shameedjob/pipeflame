@@ -92,6 +92,15 @@ class FrameRecorder:
         self.stacked_frames[pid] = target.parent
         self.version += 1
 
+    def clear(self) -> None:
+        """Forget every pid, its open stack and all recorded calls.
+        version keeps counting up, so viewers see the change and reload."""
+        self.stacked_frames.clear()
+        self.root_frames.clear()
+        self.messages = {0: ""}
+        self.message_refs.clear()
+        self.version += 1
+
     def prune(self, now: int | None = None) -> None:
         """Drop top-level calls that ended more than window_ms before now.
         A pid's roots are in start order and only its last one can still be open,
