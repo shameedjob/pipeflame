@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>pipeflame</title>
+        <style>
+            html, body { height: 100%; margin: 0; font: 13px -apple-system, system-ui, sans-serif; }
+            body { display: flex; flex-direction: column; }
+            #controls { display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #ccc; }
+            #controls label { display: flex; gap: 6px; align-items: center; }
+            #viewer { flex: 1; position: relative; }
+            #viewer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+            #empty { padding: 24px; color: #666; }
+        </style>
+    </head>
+    <body data-autorefresh="{{ autorefresh }}">
+        <!-- add new controls here; anything they change should go through setFilter() -->
+        <div id="controls">
+            <strong>pipeflame</strong>
+            <label>Tenant
+                <select id="tenant">
+                    <option value="">All</option>
+                </select>
+            </label>
+            <button id="refresh">Refresh</button>
+            <a href="/logout" style="margin-left: auto">Log out</a>
+        </div>
+        <div id="viewer"></div>
+
+        <script>
+            // query params sent to /profile.json; controls update these via setFilter()
+            const filters = {};
+
+            function setFilter(name, value) {
+                if (value === "" || value == null) delete filters[name];
+                else filters[name] = value;
+                loadProfile();
+            }
+
+            async function loadTenants() {
+                const select = document.getElementById("tenant");
+                const res = await fetch("/tenants.json");
+                if (res.status === 401) location.href = "/login";
+                const tenants = await res.json();
+                select.length = 1;
+                for (const id of tenants) select.add(new Option(id, id, false, String(id) === filters.tenant_id));
+                return tenants;
+            }
+
+            async function loadProfile() {
+                const viewer = document.getElementById("viewer");
+                const tenants = await loadTenants();
+                viewer.replaceChildren();
+                if (!tenants.length) {
+                    viewer.innerHTML = '<div id="empty">No calls recorded yet.</div>';
+                    return;
+                }
+                // speedscope only reads #profileURL on load, so swap in a fresh iframe each time
+                const profileURL = "/profile.json?" + new URLSearchParams(filters);
+                const iframe = document.createElement("iframe");
+                iframe.src = "/static/speedscope/index.html#profileURL=" + encodeURIComponent(profileURL) + "&title=pipeflame";
+                viewer.append(iframe);
+            }
+
+            document.getElementById("tenant").addEventListener("change", e => setFilter("tenant_id", e.target.value));
+            document.getElementById("refresh").addEventListener("click", loadProfile);
+            loadProfile();
+
+            // seconds between reloads, from app.py --autorefresh; -1 means no refresh
+            const autorefresh = Number(document.body.dataset.autorefresh);
+            if (autorefresh > 0) {
+                setInterval(() => { if (!document.hidden) loadProfile(); }, autorefresh * 1000);
+            }
+        </script>
+    </body>
+</html>

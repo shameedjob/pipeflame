@@ -1,0 +1,5 @@
+static/speedscope
+.venv
+__pycache__
+.DS_Store
+demo.py

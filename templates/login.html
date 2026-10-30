@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>pipeflame</title>
+    </head>
+    <body>
+        <form method="post" action="/login">
+            <label for="passkey">Passkey</label><br>
+            <input type="password" name="passkey" id="passkey" autofocus required><br>
+            <p id="error" hidden>Wrong passkey.</p>
+            <button type="submit">Log In!</button>
+        </form>
+        <script>
+            if (new URLSearchParams(location.search).has("error")) document.getElementById("error").hidden = false;
+        </script>
+    </body>
+</html>
