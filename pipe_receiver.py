@@ -29,11 +29,13 @@ def split_lines(pending: bytearray, data: bytes) -> list[bytes]:
 class PipeReceiver(ABC):
     """Accepts local clients and calls on_line with each decoded line they send.
     on_line runs on the client's reader thread, one thread per client.
+    keep_pending passes on a client's unfinished last line when it disconnects; otherwise it is dropped.
     Subclasses supply the platform transport: _accept, _chunks and _close."""
 
-    def __init__(self, on_line: Callable[[str], None], pipe_name: str):
+    def __init__(self, on_line: Callable[[str], None], pipe_name: str, keep_pending: bool = False):
         self.on_line = on_line
         self.pipe_name = pipe_name
+        self.keep_pending = keep_pending
         self._closed = False
 
     def start(self) -> threading.Thread:
@@ -66,7 +68,7 @@ class PipeReceiver(ABC):
             for chunk in self._chunks(conn):
                 for line in split_lines(pending, chunk):
                     self._emit(line)
-            if pending:
+            if pending and self.keep_pending:
                 self._emit(bytes(pending))
         finally:
             self._close(conn)
@@ -88,10 +90,10 @@ class WindowsPipeReceiver(PipeReceiver):
     ERROR_NO_DATA = 232
     INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
-    def __init__(self, on_line: Callable[[str], None], pipe_name: str):
+    def __init__(self, on_line: Callable[[str], None], pipe_name: str, keep_pending: bool = False):
         if os.name != "nt":
             raise OSError("WindowsPipeReceiver requires Windows named pipes")
-        super().__init__(on_line, pipe_name)
+        super().__init__(on_line, pipe_name, keep_pending)
         self.kernel32 = self._load_kernel32()
 
     @staticmethod
@@ -158,10 +160,10 @@ class UnixSocketReceiver(PipeReceiver):
     """Unix domain socket server for macOS (also works on Linux). The socket file is
     readable and writable by the current user only."""
 
-    def __init__(self, on_line: Callable[[str], None], pipe_name: str):
+    def __init__(self, on_line: Callable[[str], None], pipe_name: str, keep_pending: bool = False):
         if not hasattr(socket, "AF_UNIX"):
             raise OSError("UnixSocketReceiver requires Unix domain sockets")
-        super().__init__(on_line, pipe_name)
+        super().__init__(on_line, pipe_name, keep_pending)
         self._server: socket.socket | None = None
 
     def _listen(self) -> socket.socket:
@@ -211,13 +213,14 @@ class UnixSocketReceiver(PipeReceiver):
                 pass
 
 
-def create_receiver(on_line: Callable[[str], None], pipe_name: str | None = None) -> PipeReceiver:
+def create_receiver(on_line: Callable[[str], None], pipe_name: str | None = None,
+                    keep_pending: bool = False) -> PipeReceiver:
     """The receiver for this OS. pipe_name falls back to $PIPEFLAME_PIPE; one of them is required."""
     pipe_name = pipe_name or os.environ.get(PIPE_ENV_VAR)
     if not pipe_name:
         raise OSError(f"no pipe name: pass --pipe or set ${PIPE_ENV_VAR}")
     cls = WindowsPipeReceiver if os.name == "nt" else UnixSocketReceiver
-    return cls(on_line, pipe_name)
+    return cls(on_line, pipe_name, keep_pending)
 
 
 def main() -> None:
@@ -225,6 +228,8 @@ def main() -> None:
     parser.add_argument("--pipe", help=r"pipe name on Windows (e.g. \\.\pipe\pipeflame), "
                                         "socket path elsewhere (e.g. /tmp/pipeflame.sock); "
                                         f"overrides ${PIPE_ENV_VAR}")
+    parser.add_argument("--pending", action="store_true",
+                        help="print a client's unfinished last line when it disconnects instead of dropping it")
     args = parser.parse_args()
 
     print_lock = threading.Lock()
@@ -234,7 +239,7 @@ def main() -> None:
             print(line, flush=True)
 
     try:
-        receiver = create_receiver(print_line, args.pipe)
+        receiver = create_receiver(print_line, args.pipe, keep_pending=args.pending)
     except OSError as e:
         parser.error(str(e))
     # serve on a background thread: a blocking ConnectNamedPipe on the main thread ignores Ctrl+C

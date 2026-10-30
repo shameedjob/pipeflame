@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
-from frame_recorder import FrameRecorder
+from frame_recorder import DEFAULT_WINDOW_SECONDS, FrameRecorder
 from pipe_receiver import PIPE_ENV_VAR, create_receiver
 
 log = logging.getLogger(__name__)
@@ -26,8 +26,6 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 recorder = FrameRecorder()
 # each pipe client writes on its own thread while requests read, so all recorder access holds this
 recorder_lock = threading.Lock()
-# seconds between profile reloads in the browser; -1 means no refresh
-app.config["AUTOREFRESH"] = -1
 
 def handle_line(line: str) -> None:
     """Apply one tab-separated line from a pipe client:
@@ -84,7 +82,7 @@ def logout():
 @app.route('/')
 def route():
     # main.html hosts the controls and embeds speedscope from static/speedscope
-    return render_template('main.html', autorefresh=app.config["AUTOREFRESH"])
+    return render_template('main.html')
 
 @app.route('/profile.json')
 def profile():
@@ -97,24 +95,35 @@ def tenants():
     with recorder_lock:
         return jsonify(recorder.tenant_ids())
 
+@app.route('/version.json')
+def version():
+    # cheap check for auto-refresh: the profile only needs reloading when this changes
+    with recorder_lock:
+        return jsonify(version=recorder.version)
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve live flamegraphs of calls received over a pipe.")
     parser.add_argument("--pipe", help=f"pipe name on Windows, socket path elsewhere; overrides ${PIPE_ENV_VAR}")
-    parser.add_argument("--autorefresh", type=float, default=-1, metavar="SECONDS",
-                        help="reload the profile in the browser every SECONDS (default -1: no refresh)")
+    parser.add_argument("--pending", action="store_true",
+                        help="keep a client's unfinished last line (no trailing newline) when it disconnects; "
+                             "by default it is dropped")
+    parser.add_argument("--window", type=float, default=DEFAULT_WINDOW_SECONDS, metavar="SECONDS",
+                        help="drop top-level calls that ended more than SECONDS ago "
+                             f"(default {DEFAULT_WINDOW_SECONDS}: 30 minutes)")
     args = parser.parse_args()
-    if args.autorefresh != -1 and args.autorefresh <= 0:
-        parser.error("--autorefresh must be positive, or -1 for no refresh")
-    app.config["AUTOREFRESH"] = args.autorefresh
+    if args.window <= 0:
+        parser.error("--window must be positive")
+    with recorder_lock:
+        recorder.window_ms = int(args.window * 1000)
 
     try:
-        receiver = create_receiver(handle_line, args.pipe)
+        receiver = create_receiver(handle_line, args.pipe, keep_pending=args.pending)
     except OSError as e:
         parser.error(str(e))
     receiver.start()
     log.warning("listening on %s", receiver.pipe_name)
     try:
-        app.run(port=3302)
+        app.run(port=3303)
     finally:
         if hasattr(receiver, "close"):
             receiver.close()

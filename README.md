@@ -48,22 +48,23 @@ Start the app from the project folder with the virtual environment active (`sour
 python app.py
 ```
 
-Then open http://localhost:3302. The flamegraph fills in as clients send calls; press Refresh to reload it, or start the app with `--autorefresh`.
+Then open http://localhost:3302. The flamegraph fills in as clients send calls; press Refresh to reload it, or pick an Auto-refresh interval (15 seconds, 30 seconds or 1 minute) in the toolbar. Each browser remembers its own choice, and each reload resets the viewer's zoom.
 
 | Argument | Description |
 | --- | --- |
 | `--pipe PATH` | Pipe to listen on: a named pipe on Windows (e.g. `\\.\pipe\pipeflame`), a socket path on macOS (e.g. `/tmp/pipeflame.sock`). Overrides `PIPEFLAME_PIPE`. One of the two is required. |
-| `--autorefresh SECONDS` | Reload the flamegraph in the browser every `SECONDS`. Defaults to `-1`, no refresh. Each reload resets the viewer's zoom. |
+| `--window SECONDS` | Keep only calls from the last `SECONDS`; a top-level call is dropped, with everything under it, once it ended longer ago than that. Defaults to `1800` (30 minutes). Lower it on busy apps to keep memory and reload time down. |
+| `--pending` | When a client disconnects partway through a line (no trailing newline), process that last line anyway. By default it is dropped. |
 
 ```bash
-python app.py --pipe /tmp/pipeflame.sock --autorefresh 5
+python app.py --pipe /tmp/pipeflame.sock --pending
 ```
 
 On macOS, socket paths must be under 104 characters.
 
 ### Sending calls
 
-Clients connect to the pipe and write one tab-separated line per event: an `O` (open) line when a call starts and a `C` (close) line when it returns. Calls nest per `pid`, so a `C` line must match the most recent open call's `object` and `function`.
+Clients connect to the pipe and write one tab-separated line per event: an `O` (open) line when a call starts and a `C` (close) line when it returns. Calls nest per `pid`: a `C` line closes the most recent open call with the same `object` and `function`. Any calls still open inside it are closed at the same time, so a lost `C` line doesn't leave the stack stuck. A `C` line that matches no open call is ignored.
 
 ```text
 O<TAB>pid<TAB>tenant_id<TAB>object<TAB>function<TAB>message

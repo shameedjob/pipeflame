@@ -8,12 +8,14 @@
             body { display: flex; flex-direction: column; }
             #controls { display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #ccc; }
             #controls label { display: flex; gap: 6px; align-items: center; }
-            #viewer { flex: 1; position: relative; }
-            #viewer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+            #viewer { flex: 1; position: relative; isolation: isolate; }
+            #viewer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 1; }
+            /* a reload renders behind the current view and is swapped in once it's drawn */
+            #viewer iframe.loading { z-index: 0; pointer-events: none; }
             #empty { padding: 24px; color: #666; }
         </style>
     </head>
-    <body data-autorefresh="{{ autorefresh }}">
+    <body>
         <!-- add new controls here; anything they change should go through setFilter() -->
         <div id="controls">
             <strong>pipeflame</strong>
@@ -23,6 +25,15 @@
                 </select>
             </label>
             <button id="refresh">Refresh</button>
+            <label>Auto-refresh
+                <select id="autorefresh">
+                    <option value="0">None</option>
+                    <option value="15">15 seconds</option>
+                    <option value="30">30 seconds</option>
+                    <option value="60">1 minute</option>
+                </select>
+            </label>
+            <button id="Clear">Clear</button>
             <a href="/logout" style="margin-left: auto">Log out</a>
         </div>
         <div id="viewer"></div>
@@ -47,30 +58,91 @@
                 return tenants;
             }
 
+            async function loadVersion() {
+                const res = await fetch("/version.json");
+                if (res.status === 401) location.href = "/login";
+                return (await res.json()).version;
+            }
+
+            // recorder version the current view was built from; auto-refresh skips reloads while it matches
+            let shownVersion = null;
+            // iframe still loading behind the current view, if any
+            let pending = null;
+
+            async function clear(){
+                
+            }
+
             async function loadProfile() {
                 const viewer = document.getElementById("viewer");
+                // read before the profile, so calls arriving mid-load trigger the next refresh
+                const version = await loadVersion();
                 const tenants = await loadTenants();
-                viewer.replaceChildren();
+                shownVersion = version;
+                pending?.remove();
+                pending = null;
                 if (!tenants.length) {
                     viewer.innerHTML = '<div id="empty">No calls recorded yet.</div>';
                     return;
                 }
-                // speedscope only reads #profileURL on load, so swap in a fresh iframe each time
+                // speedscope only reads #profileURL on load, so each reload needs a fresh iframe
                 const profileURL = "/profile.json?" + new URLSearchParams(filters);
                 const iframe = document.createElement("iframe");
+                iframe.className = "loading";
                 iframe.src = "/static/speedscope/index.html#profileURL=" + encodeURIComponent(profileURL) + "&title=pipeflame";
+                pending = iframe;
                 viewer.append(iframe);
+                await whenRendered(iframe, profileURL);
+                if (pending !== iframe) return;  // a newer load replaced this one
+                pending = null;
+                iframe.classList.remove("loading");
+                for (const el of [...viewer.children]) if (el !== iframe) el.remove();
+            }
+
+            // resolves once speedscope in iframe has fetched profileURL and had a moment to draw it;
+            // gives up waiting after 15s so a slow load still gets shown
+            function whenRendered(iframe, profileURL) {
+                const url = new URL(profileURL, location.href).href;
+                const deadline = Date.now() + 15000;
+                return new Promise(resolve => {
+                    const check = () => {
+                        let fetched = false;
+                        try { fetched = iframe.contentWindow.performance.getEntriesByName(url).length > 0; } catch {}
+                        if (fetched || Date.now() > deadline) setTimeout(resolve, 300);
+                        else setTimeout(check, 100);
+                    };
+                    iframe.addEventListener("load", check, { once: true });
+                });
+            }
+
+            async function autoRefresh() {
+                if (document.hidden || pending) return;
+                if (await loadVersion() !== shownVersion) loadProfile();
             }
 
             document.getElementById("tenant").addEventListener("change", e => setFilter("tenant_id", e.target.value));
             document.getElementById("refresh").addEventListener("click", loadProfile);
+            document.getElementById("clear").addEventListener("clear_check", clear);
             loadProfile();
 
-            // seconds between reloads, from app.py --autorefresh; -1 means no refresh
-            const autorefresh = Number(document.body.dataset.autorefresh);
-            if (autorefresh > 0) {
-                setInterval(() => { if (!document.hidden) loadProfile(); }, autorefresh * 1000);
+            // seconds between reloads, chosen per browser and remembered; 0 means no refresh
+            const autorefresh = document.getElementById("autorefresh");
+            let refreshTimer = null;
+
+            function setAutorefresh(seconds) {
+                clearInterval(refreshTimer);
+                refreshTimer = seconds > 0
+                    ? setInterval(autoRefresh, seconds * 1000)
+                    : null;
+                try { localStorage.setItem("pipeflame.autorefresh", seconds); } catch {}
             }
+
+            try {
+                const saved = localStorage.getItem("pipeflame.autorefresh");
+                if ([...autorefresh.options].some(o => o.value === saved)) autorefresh.value = saved;
+            } catch {}
+            autorefresh.addEventListener("change", e => setAutorefresh(Number(e.target.value)));
+            setAutorefresh(Number(autorefresh.value));
         </script>
     </body>
 </html>
