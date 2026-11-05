@@ -13,6 +13,7 @@
             /* a reload renders behind the current view and is swapped in once it's drawn */
             #viewer iframe.loading { z-index: 0; pointer-events: none; }
             #empty { padding: 24px; color: #666; }
+            #copy.icon { display: inline-flex; align-items: center; padding: 3px 6px; }
         </style>
     </head>
     <body>
@@ -34,6 +35,7 @@
                 </select>
             </label>
             <button id="clear">Clear</button>
+            <button id="copy" class="icon" title="Copy the message of the selected frame" aria-label="Copy the message of the selected frame"></button>
             <a href="/logout" style="margin-left: auto">Log out</a>
         </div>
         <div id="viewer"></div>
@@ -76,6 +78,41 @@
                     if (res.status === 401) location.href = "/login";
                     loadProfile();
                 }
+            }
+
+            // speedscope renders the selected frame's message in an element with this generated class;
+            // the last one on the page is the current selection
+            const MESSAGE_CLASS = "_1gb1rbb";
+            const COPY_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11"/></svg>';
+            const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8.5l3 3 7-7"/></svg>';
+
+            async function copyMessage() {
+                const button = document.getElementById("copy");
+                const iframe = document.querySelector("#viewer iframe:not(.loading)");
+                const els = iframe?.contentDocument?.querySelectorAll("." + MESSAGE_CLASS) ?? [];
+                const text = els.length ? els[els.length - 1].innerText : "";
+                let copied = false;
+                if (text) {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        copied = true;
+                    } catch {
+                        // clipboard API needs a secure context; fall back to execCommand
+                        const area = document.createElement("textarea");
+                        area.value = text;
+                        document.body.append(area);
+                        area.select();
+                        copied = document.execCommand("copy");
+                        area.remove();
+                    }
+                }
+                // icon flips to a check (or the title explains a failure) briefly, then resets
+                button.innerHTML = copied ? CHECK_ICON : COPY_ICON;
+                button.title = !text ? "Nothing selected" : copied ? "Copied" : "Copy failed";
+                setTimeout(() => {
+                    button.innerHTML = COPY_ICON;
+                    button.title = "Copy the message of the selected frame";
+                }, 1500);
             }
 
             async function loadProfile() {
@@ -128,6 +165,8 @@
             document.getElementById("tenant").addEventListener("change", e => setFilter("tenant_id", e.target.value));
             document.getElementById("refresh").addEventListener("click", loadProfile);
             document.getElementById("clear").addEventListener("click", clear);
+            document.getElementById("copy").innerHTML = COPY_ICON;
+            document.getElementById("copy").addEventListener("click", copyMessage);
             loadProfile();
 
             // seconds between reloads, chosen per browser and remembered; 0 means no refresh
